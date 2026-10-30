@@ -89,8 +89,7 @@ and run the notebooks in order. Tuned parameters are written to `models/best_par
 
 | Path | Contents |
 |---|---|
-| `notebooks/` | 01 EDA, 02 baseline, 03 features, 04 tables, 05 encoding and log, 06 tuning, 07 SHAP, 08 tuned model comparison (not executed: it exceeded this laptop's memory), 09 error analysis, 10 default-settings comparison, 11 feature improvements with a locked test set |
+| `notebooks/` | 01 EDA, 02 baseline, 03 features, 04 tables, 05 encoding and log, 06 tuning, 07 SHAP, 09 error analysis, 10 default-settings comparison, 11 feature improvements with a locked test set |
 | `src/` | `features.py`, `aggregate.py` |
 | `DECISIONS.md`, `APPROACH.md`, `data_dictionary.md` | Decision log, method checklist, column guide |
 | `assets/` | Figures used in this README |
-| `course/` | Course brief and template material (not part of the analysis) |
