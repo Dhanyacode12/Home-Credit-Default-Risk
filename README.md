@@ -1,152 +1,96 @@
-# Machine Learning Project Template
+# Home Credit Default Risk
 
-A starting point for your team machine learning project. The repository ships an example notebook that trains a simple model with minimal cleaning and feature selection. Use it as scaffolding, then build your own project on top of it.
+Predict which loan applicants will have payment difficulties (`TARGET = 1`), using the [Home Credit Default Risk](https://www.kaggle.com/competitions/home-credit-default-risk) data. About 8% of the 307,511 applicants are positives, so the metric is **ROC-AUC** and all splits are stratified.
 
-The example uses the [coffee quality dataset](https://github.com/jldbc/coffee-quality-database).
+## Result
 
-## Learning Objectives
+Cross-validated ROC-AUC, built up one step at a time (each step must beat the previous one):
 
-By the end of this repository, you should be able to:
+| Step | AUC | Notebook |
+|---|---|---|
+| Cleaned baseline (application table, LightGBM) | 0.7581 | 02, 03 |
+| + engineered features (ratios, years, combined external scores) | 0.7650 | 03 |
+| + aggregated bureau, previous application and installments tables | 0.7868 | 04 |
+| + tuning with Optuna and early stopping (fresh 5-fold split) | **0.7914** | 06 |
 
-- Work on a data science project as a team, sharing the work across the data science lifecycle.
-- Frame a business problem as a machine learning task and choose a performance metric that fits the value you want to create.
-- Build a baseline model, then iterate with error analysis and at least three algorithms (including cross validation and hyperparameter tuning).
-- Communicate your findings and recommendations to a non-technical audience in a short presentation.
+Hold-out AUC of the tuned model (80/20 split): 0.7918.
 
-## Learning Path
+**Final locked test set (notebook 11): AUC 0.7922** (95% bootstrap interval 0.786 to 0.798). 20% of applicants were set aside first and scored once, after every choice had been made on the other 80%. The LightGBM settings were originally tuned on all rows, so a strictly clean figure could be slightly lower.
 
-Your project follows the data science lifecycle:
+Fold-to-fold spread is about 0.003 to 0.004, so differences smaller than that are noise. In particular, the Optuna search itself added only +0.0021 over the old settings with early stopping; most of the tuning gain came from more trees at a lower learning rate.
 
-```mermaid
-flowchart LR
-    A[Data] --> B[EDA]
-    B --> C[Baseline model]
-    C --> D[Error analysis and iteration]
-    D --> E[Stakeholder presentation]
-```
+### Default-settings comparison (quick look, notebook 10)
+One 80/20 split, library defaults, no cross-validation, no tuning, so no error bars (the usual fold spread is about 0.003 to 0.004 AUC).
 
-Start with the assignment, set up your board, then use the example notebook as a reference:
+| Model | Train AUC | Test AUC |
+|---|---|---|
+| LightGBM | 0.839 | 0.784 |
+| Logistic regression | 0.778 | 0.774 |
+| XGBoost | 0.912 | 0.773 |
+| Random forest | 1.000 | 0.732 |
+| Dummy (base rate) | 0.500 | 0.500 |
 
-| File / Folder | Description |
-|---|---|
-| [**Assignment**](01_assignment.md) | The project brief: timeline, milestones, project options, deliverables, and things to think about. |
-| [**Kanban Board**](02_kanban_board.md) | Step-by-step setup of a GitHub project board to plan and track your work. |
-| [**EDA and Modeling**](03_eda-and-modeling.ipynb) | Worked example of selecting features, doing minimal cleaning, and training a simple model. |
+Default random forest and XGBoost overfit strongly (large train-test gap); they are not tuned or cross-validated here, so this is a first look and not a ranking. Tuned, cross-validated results exist only for LightGBM (0.7914).
 
-### Additional Folders and Files
+### What did not help (and is reported as such)
+- POS-cash and credit-card tables: 0.7882 with all five tables vs 0.7868 with three, within noise, so they were left out.
+- Ideas from the error analysis (notebook 11, 3-fold CV): ten extra external-score features changed AUC by -0.0003, and recent (365-day) payment behaviour by +0.0007, both far below the fold spread (about 0.0045). Blending LightGBM with XGBoost added 0.0006, under the 0.001 threshold set in advance. None were kept, so the locked-test score equals the baseline's.
+- One-hot encoding and log transforms: no change for LightGBM (0.7868 vs 0.7867). They helped logistic regression (0.7649 to 0.7737 AUC), which stays below LightGBM.
 
-| File / Folder | Description |
-|---|---|
-| [**Data**](data/) | Where your datasets go. |
-| [**Models**](models/) | Where trained models are saved. |
-| [**Assets**](assets/) | Screenshots used in the Kanban board guide. |
-| [**pyproject.toml**](pyproject.toml) | Project configuration and dependencies. |
-| [**uv.lock**](uv.lock) | Dependency lock file. |
+## What drives the predictions (SHAP, notebook 07)
 
-## Setup
+![SHAP beeswarm](assets/shap_beeswarm.png)
 
-> [!NOTE]
-> Throughout these steps, text in angle brackets like `<repo-name>` is a **placeholder**. Replace it, including the `< >` brackets, with your own value. For example, `cd <repo-name>` becomes `cd my-ml-project`.
+- The combined external score (`EXT_SOURCE_MEAN`) is by far the strongest feature; low scores push towards default.
+- Share of total SHAP importance by source: application 48%, previous applications 25%, bureau 14%, instalments 14%.
+- Directions agree with the EDA: larger loan annuity, a loan larger than the goods price, and late instalments raise predicted risk.
 
-### 1. Create the Repository from the Template
+## Where the model goes wrong (error analysis, notebook 09)
 
-Click **Use this template** on GitHub.
+![Lift and calibration](assets/error_lift_calibration.png)
 
-When creating the repository:
+- Ranking and calibration are good: the default rate rises from 0.8% in the lowest-scored tenth of applicants to 30.6% in the highest, and predicted probabilities match actual rates.
+- Flagging the riskiest 20% catches 57% of defaulters (23% of flagged applicants default). The missed defaulters look like good applicants: their external scores are close to those of people correctly cleared.
+- Ranking is weakest inside some groups (ages 60 to 70, AUC 0.752; pensioner-like applicants, 0.766; ages 20 to 30, 0.767). Small groups are noisy and no confidence intervals were computed.
 
-- Set yourself as the **Owner**
-- Choose a repository name
-- Disable **Include all branches**
-- Click **Create repository**
+## Approach
 
-> [!IMPORTANT]
-> If you are working in pairs or groups, only **one person** should complete this step.
+1. **EDA** (`notebooks/01_eda.ipynb`): target balance, missing values, anomalies, default rate by category, correlations.
+2. **Decisions** ([DECISIONS.md](DECISIONS.md)): every cleaning and feature choice is logged with the evidence behind it, for example the `DAYS_EMPLOYED = 365243` placeholder (18% of rows, mostly pensioners) and `XNA` labels.
+3. **Features** (`src/features.py`): cleaning, ratios, combined external scores, rare-category merging.
+4. **Relational tables** (`src/aggregate.py`): each secondary table is reduced to one row per applicant (mean, max, min, sum, category shares, count).
+5. **Modelling and tuning**: LightGBM with native categories and missing values; Optuna search (30 trials) re-scored on a different split to avoid an optimistic estimate.
+6. **Explanation**: SHAP on 10,000 held-out applicants.
 
----
+The general checklist for approaching a new dataset is in [APPROACH.md](APPROACH.md); column meanings are in [data_dictionary.md](data_dictionary.md).
 
-### 2. Add Collaborators (Pairs/Groups Only)
+## Limitations and next steps
 
-If working with teammates:
+- **Only one model family was tuned.** Logistic regression was run only as an untuned benchmark. Comparing more algorithms (for example random forest, XGBoost or CatBoost) with cross-validation and tuning is the main open item.
+- **Sensitive attributes.** Age and gender are used by the model (default rate falls from 11.5% for ages 20 to 30 to 4.9% for ages 60 to 70; `CODE_GENDER` is the third most important feature). This is acceptable for a learning project but would need a fairness and legal review before real lending use.
+- No Kaggle test set was available from the mirror dataset, so all scores are cross-validation or hold-out estimates on the training data.
+- Scores are well calibrated (notebook 09), but no real approval threshold or cost analysis was done: the 5:1 cost ratio used there is an illustrative assumption, not a Home Credit figure.
 
-1. Open the repository on GitHub
-2. Go to **Settings → Collaborators**
-3. Add your teammates as collaborators
-4. Share the repository link with your team
-
-Teammates should accept the invitation before continuing.
-
----
-
-### 3. Clone the Repository
-
-Copy the SSH URL from the **Code** button on GitHub, then run:
+## Reproduce
 
 ```bash
-git clone <copied-ssh-url>
-```
-
-The copied SSH URL will look like `git@github.com:<your-username>/<repo-name>.git`.
-
----
-
-### 4. Move into the Project Folder and Install Dependencies
-
-This installs all dependencies and creates a virtual environment in (`.venv/`).
-
-```bash
-cd <repo-name>
 uv sync
 ```
 
-> [!TIP]
-> This is your own project, so you will add libraries as you go. Install a new package with `uv add <package>` (for example `uv add xgboost`). It updates `pyproject.toml` and `uv.lock` for the whole team.
-
----
-
-### 5. Open the Notebook
-
-> [!NOTE]
-> Make sure you open VS Code from the project root so it automatically detects the environment created by `uv sync`.
-
-Launch VS Code in the project root folder:
+Download the data into `data/raw/` (files are prefixed `HC_`; the folder is gitignored and needs Kaggle credentials, never commit a token), then:
 
 ```bash
-code .
+uv run python src/aggregate.py bureau previous installments
 ```
 
-Then open `03_eda-and-modeling.ipynb` and select the Python environment created by `uv sync` as the kernel.
+and run the notebooks in order. Tuned parameters are written to `models/best_params.json`.
 
-## Handling Merge Conflicts in Notebooks
+## Repository layout
 
-When working in a team, `.ipynb` files can cause messy merge conflicts because they are JSON based. The `nbdime` tool makes this easier, and `uvx` runs it without adding it to your project dependencies.
-
-Enable the git integration once:
-
-```bash
-uvx nbdime config-git --enable
-```
-
-When a conflict happens, open the merge tool:
-
-```bash
-uvx nbdime mergetool
-```
-
-A web interface opens showing both notebook versions side by side. Choose what to keep, save, and close the tool, then:
-
-```bash
-git add your_notebook.ipynb
-git commit -m "Resolve notebook conflict"
-```
-
-> [!TIP]
-> When working with notebooks, it's a good idea to clear outputs before committing to reduce the chances of conflicts. You can do this in VS Code with the command palette: `Notebook: Clear All Outputs`.
-
-## References & Further Reading
-
-- [**scikit-learn Documentation**](https://scikit-learn.org/stable/): the library used for modelling, with user guides and examples.
-- [**Choosing the Right Estimator**](https://scikit-learn.org/stable/machine_learning_map.html): a visual map for picking a model based on your problem and data.
-- [**PEP 8 Style Guide for Python Code**](https://peps.python.org/pep-0008/): the style your notebook should follow.
-- [**Jupyter Notebooks in VS Code**](https://code.visualstudio.com/docs/datascience/jupyter-notebooks): how to run notebooks and pick a kernel in VS Code.
-- [**uv Documentation**](https://docs.astral.sh/uv/): the package manager that handles Python and dependencies for this repo.
-- [**Zindi Competitions**](https://zindi.africa/competitions): real-world challenges, several of which are listed as project options in the assignment.
+| Path | Contents |
+|---|---|
+| `notebooks/` | 01 EDA, 02 baseline, 03 features, 04 tables, 05 encoding and log, 06 tuning, 07 SHAP, 08 tuned model comparison (not executed: it exceeded this laptop's memory), 09 error analysis, 10 default-settings comparison, 11 feature improvements with a locked test set |
+| `src/` | `features.py`, `aggregate.py` |
+| `DECISIONS.md`, `APPROACH.md`, `data_dictionary.md` | Decision log, method checklist, column guide |
+| `assets/` | Figures used in this README |
+| `course/` | Course brief and template material (not part of the analysis) |
